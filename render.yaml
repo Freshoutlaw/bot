@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: whatsapp-bot-worker
+    runtime: node
+    repo: https://github.com/Freshoutlaw/bot # <--- REPLACE WITH YOUR REPO URL
+    plan: starter # 'Starter' plan ($7/month) ensures the service is always on.
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false # This means you will set the value manually on Render's dashboard
+    disk:
+      name: whatsapp-session-data
+      mountPath: /opt/render/project/src/.wwebjs_auth
+      sizeGB: 1
