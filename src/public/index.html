@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Waitlist Bot - Admin Dashboard</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #e9ecef; }
+        .header { background: #075e54; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { margin: 0; font-size: 1.5rem; }
+        .status-badge { background: #25d366; color: #075e54; padding: 5px 12px; border-radius: 20px; font-weight: bold; font-size: 0.8rem; }
+        .container { max-width: 1400px; margin: 20px auto; padding: 0 20px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ddd; }
+        .tab-btn { background: none; border: none; padding: 10px 20px; font-size: 1rem; cursor: pointer; transition: 0.2s; }
+        .tab-btn.active { border-bottom: 3px solid #075e54; font-weight: bold; color: #075e54; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background: #f2f2f2; }
+        button { background: #075e54; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+        button.danger { background: #dc3545; }
+        button.success { background: #28a745; }
+        .chat-messages { background: #f8f9fa; padding: 15px; border-radius: 8px; max-height: 400px; overflow-y: auto; }
+        .message { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }
+        .user { background: #dcf8c5; text-align: right; }
+        .bot { background: #fff; border: 1px solid #ddd; }
+        .timestamp { font-size: 0.7rem; color: #666; margin-left: 10px; }
+        .waitlist-item { margin-bottom: 10px; padding: 10px; background: #f1f1f1; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .search-box { margin-bottom: 20px; }
+        .search-box input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+        @media (max-width: 768px) { th, td { font-size: 0.8rem; } button { padding: 4px 8px; } }
+    </style>
+</head>
+<body>
+<div class="header">
+    <h1>🤖 WhatsApp Waitlist Admin</h1>
+    <div><span class="status-badge" id="statusBadge">Connecting...</span> <span id="botNumberDisplay"></span></div>
+</div>
+<div class="container">
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="waitlist">📋 Waitlist</button>
+        <button class="tab-btn" data-tab="threads">💬 Chat Threads</button>
+        <button class="tab-btn" data-tab="stats">📊 Stats</button>
+    </div>
+
+    <!-- Waitlist Tab -->
+    <div id="waitlist" class="tab-content active">
+        <div class="card">
+            <h3>Current Queue</h3>
+            <div id="waitlistContainer">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Chat Threads Tab -->
+    <div id="threads" class="tab-content">
+        <div class="card">
+            <h3>Recent Conversations</h3>
+            <div class="search-box"><input type="text" id="searchThreads" placeholder="Search by phone or name..."></div>
+            <div id="threadsList">Loading...</div>
+        </div>
+        <div class="card" id="chatDetail" style="display:none;">
+            <h3>Chat History <button id="closeChat">✖ Close</button></h3>
+            <div id="chatMessages" class="chat-messages"></div>
+        </div>
+    </div>
+
+    <!-- Stats Tab -->
+    <div id="stats" class="tab-content">
+        <div class="card">
+            <h3>Queue Statistics</h3>
+            <div id="statsContainer">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentThreadPhone = null;
+
+    // Helper fetch
+    async function fetchJSON(url, options = {}) {
+        const res = await fetch(url, options);
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    // Load waitlist
+    async function loadWaitlist() {
+        try {
+            const waitlist = await fetchJSON('/api/waitlist');
+            if (!waitlist.length) {
+                document.getElementById('waitlistContainer').innerHTML = '<p>Queue is empty.</p>';
+                return;
+            }
+            let html = '<table><tr><th>Position</th><th>Phone</th><th>Name</th><th>Issue</th><th>Ticket</th><th>Joined</th><th>Actions</th></tr>';
+            waitlist.forEach((entry, idx) => {
+                html += `<tr>
+                    <td>${idx+1}</td>
+                    <td>${entry.phone}</td>
+                    <td>${escapeHtml(entry.name)}</td>
+                    <td>${escapeHtml(entry.issue || '-')}</td>
+                    <td>${entry.ticketId || '-'}</td>
+                    <td>${new Date(entry.joinedAt).toLocaleTimeString()}</td>
+                    <td>
+                        <button class="success" onclick="markServed('${entry.phone}')">✅ Mark Served</button>
+                        <button class="danger" onclick="removeFromQueue('${entry.phone}')">❌ Remove</button>
+                    </td>
+                </tr>`;
+            });
+            html += '</table>';
+            document.getElementById('waitlistContainer').innerHTML = html;
+        } catch (err) {
+            document.getElementById('waitlistContainer').innerHTML = '<p>Error loading waitlist.</p>';
+            console.error(err);
+        }
+    }
+
+    window.markServed = async (phone) => {
+        if (confirm(`Mark ${phone} as served?`)) {
+            await fetchJSON(`/api/done/${phone}`, { method: 'POST' });
+            loadWaitlist();
+            loadStats();
+        }
+    };
+    window.removeFromQueue = async (phone) => {
+        if (confirm(`Remove ${phone} from queue?`)) {
+            await fetchJSON(`/api/waitlist/${phone}`, { method: 'DELETE' });
+            loadWaitlist();
+            loadStats();
+        }
+    };
+
+    // Load chat threads
+    async function loadThreads(search = '') {
+        try {
+            let threads = await fetchJSON('/api/threads');
+            if (search) {
+                const s = search.toLowerCase();
+                threads = threads.filter(t => t.phone.includes(s) || (t.name && t.name.toLowerCase().includes(s)));
+            }
+            if (!threads.length) {
+                document.getElementById('threadsList').innerHTML = '<p>No conversations yet.</p>';
+                return;
+            }
+            let html = '<table><tr><th>Phone</th><th>Name</th><th>Issue</th><th>Status</th><th>Last Message</th><th>Updated</th><th></th></tr>';
+            threads.forEach(t => {
+                html += `<tr>
+                    <td>${t.phone}</td>
+                    <td>${escapeHtml(t.name)}</td>
+                    <td>${escapeHtml(t.issue || '-')}</td>
+                    <td>${t.status || '-'}</td>
+                    <td>${escapeHtml(t.lastMessage?.substring(0, 40) || '-')}</td>
+                    <td>${new Date(t.lastUpdated).toLocaleString()}</td>
+                    <td><button onclick="viewChat('${t.phone}')">💬 View</button></td>
+                </tr>`;
+            });
+            html += '</table>';
+            document.getElementById('threadsList').innerHTML = html;
+        } catch (err) {
+            document.getElementById('threadsList').innerHTML = '<p>Error loading threads.</p>';
+        }
+    }
+
+    window.viewChat = async (phone) => {
+        currentThreadPhone = phone;
+        const history = await fetchJSON(`/api/history/${phone}`);
+        const chatDiv = document.getElementById('chatMessages');
+        if (!history.length) {
+            chatDiv.innerHTML = '<p>No messages yet.</p>';
+        } else {
+            chatDiv.innerHTML = history.map(msg => `
+                <div class="message ${msg.direction}">
+                    <strong>${msg.direction === 'user' ? '👤 Customer' : '🤖 Bot'}</strong>
+                    <span class="timestamp">${new Date(msg.timestamp).toLocaleString()}</span><br>
+                    ${escapeHtml(msg.text)}
+                </div>
+            `).join('');
+        }
+        document.getElementById('chatDetail').style.display = 'block';
+    };
+    document.getElementById('closeChat')?.addEventListener('click', () => {
+        document.getElementById('chatDetail').style.display = 'none';
+        currentThreadPhone = null;
+    });
+    document.getElementById('searchThreads')?.addEventListener('input', (e) => loadThreads(e.target.value));
+
+    // Load stats
+    async function loadStats() {
+        try {
+            const stats = await fetchJSON('/api/stats');
+            document.getElementById('statsContainer').innerHTML = `
+                <p>⏳ Waiting: <strong>${stats.waiting || 0}</strong></p>
+                <p>🔧 Currently serving: <strong>${stats.serving || 0}</strong></p>
+                <p>✅ Served today: <strong>${stats.done || 0}</strong></p>
+                <p>📈 Total customers: <strong>${stats.total || 0}</strong></p>
+            `;
+        } catch (err) {
+            document.getElementById('statsContainer').innerHTML = '<p>Error loading stats.</p>';
+        }
+    }
+
+    // Status and bot number
+    async function updateStatus() {
+        try {
+            const status = await fetchJSON('/api/status');
+            document.getElementById('statusBadge').innerText = status.status.toUpperCase();
+            if (status.botNumber) document.getElementById('botNumberDisplay').innerText = `📱 ${status.botNumber}`;
+        } catch (err) {}
+    }
+
+    function escapeHtml(str) { return String(str).replace(/[&<>]/g, function(m){if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
+
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+            const tabId = btn.getAttribute('data-tab');
+            document.getElementById(tabId).classList.add('active');
+            if (tabId === 'waitlist') loadWaitlist();
+            else if (tabId === 'threads') loadThreads();
+            else if (tabId === 'stats') loadStats();
+        });
+    });
+
+    // Initial load
+    updateStatus();
+    loadWaitlist();
+    loadThreads();
+    loadStats();
+    setInterval(() => { updateStatus(); if (document.querySelector('.tab-btn.active').getAttribute('data-tab') === 'waitlist') loadWaitlist(); }, 5000);
+</script>
+</body>
+</html>
